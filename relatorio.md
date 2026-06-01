@@ -1,88 +1,80 @@
 # Relatório – Resolução de Sudoku 4x4 com Rede Neural Artificial Multicamadas
 
+## Disciplina
+
+Inteligência Artificial
+
+## Professor
+
+Edjard Mota
+
+## Integrantes
+
+- Gabriel Yuri Cavalcante de Castro – 22350996
+- Marcele Azevedo de Paula Oliveira – 22353160
+
+## Universidade
+
+Universidade Federal do Amazonas (UFAM)
+
+---
+
 ## 1. Introdução
 
-O Sudoku é um problema clássico de satisfação de restrições (Constraint Satisfaction Problem – CSP), amplamente utilizado em pesquisas de Inteligência Artificial. O objetivo consiste em preencher uma grade de forma que cada linha, coluna e bloco contenham todos os valores permitidos sem repetições.
+O presente trabalho tem como objetivo propor uma solução computacional baseada em Rede Neural Artificial Multicamadas para resolver o quebra-cabeça Sudoku 4x4, composto por subgrupos 2x2 e valores pertencentes ao conjunto S = {1, 2, 3, 4}.
 
-Embora possa ser tratado como um jogo de lógica, o Sudoku representa um problema de raciocínio simbólico, pois a determinação de cada valor depende da análise simultânea de múltiplas restrições. Dessa forma, o problema pode ser modelado utilizando lógica proposicional, satisfatibilidade booleana (SAT), técnicas de busca, heurísticas e métodos de aprendizado de máquina.
+O Sudoku, apesar de ser conhecido como um jogo lógico, pode ser analisado como um problema clássico de Inteligência Artificial. Sua resolução exige que um conjunto de restrições seja satisfeito simultaneamente. Cada célula deve conter apenas um número, e esse número não pode se repetir na mesma linha, na mesma coluna nem no mesmo subgrupo 2x2.
 
-Neste trabalho foi desenvolvida uma solução baseada em Rede Neural Artificial Multicamadas (MLP) para resolver instâncias de Sudoku 4x4. Além do aprendizado supervisionado realizado pela rede neural, foi utilizado um mecanismo de validação simbólica baseado nas regras do jogo, permitindo a correção de soluções inválidas por meio de backtracking guiado pelas probabilidades produzidas pela rede.
+Dessa forma, o problema não envolve apenas reconhecimento de padrões. Ele também exige raciocínio baseado em regras, restrições e validação lógica. Por esse motivo, a solução desenvolvida combina uma Rede Neural Artificial Multicamadas com um mecanismo simbólico de validação e correção por backtracking.
+
+Essa abordagem híbrida permite explorar tanto o aprendizado estatístico da rede neural quanto a garantia lógica oferecida pela verificação das regras do Sudoku.
+
+---
 
 ## 2. Fundamentação Teórica
 
 ### 2.1 Sudoku como Problema de Satisfação de Restrições
 
-O Sudoku pode ser representado como um CSP, no qual cada célula corresponde a uma variável e cada variável deve assumir um valor pertencente ao conjunto:
+O Sudoku pode ser definido como um Problema de Satisfação de Restrições, também conhecido como CSP (Constraint Satisfaction Problem). Nesse tipo de problema, há variáveis, domínios e restrições.
 
-S = {1, 2, 3, 4}
+No Sudoku 4x4:
 
-No Sudoku 4x4, a solução deve obedecer simultaneamente às seguintes restrições:
+- As variáveis são as 16 células do tabuleiro.
+- O domínio de cada variável é o conjunto S = {1, 2, 3, 4}.
+- As restrições determinam que não pode haver repetição em linhas, colunas e blocos 2x2.
 
-- Cada célula deve conter exatamente um valor.
-- Cada linha deve conter todos os elementos de S sem repetição.
-- Cada coluna deve conter todos os elementos de S sem repetição.
-- Cada bloco 2x2 deve conter todos os elementos de S sem repetição.
+Assim, uma solução só é considerada válida quando todas as restrições são satisfeitas ao mesmo tempo.
 
-Essas restrições também podem ser expressas por meio de lógica proposicional e utilizadas por solucionadores SAT ou sistemas de inferência lógica.
+### 2.2 Sudoku como Problema de Raciocínio
 
-### 2.2 Redes Neurais Multicamadas
+O Sudoku também pode ser entendido como um problema de raciocínio lógico. Para preencher corretamente uma célula, é necessário analisar quais valores já aparecem na linha, na coluna e no bloco correspondente.
 
-As Redes Neurais Artificiais Multicamadas, também chamadas de Multilayer Perceptron (MLP), são modelos computacionais formados por uma camada de entrada, uma ou mais camadas ocultas e uma camada de saída.
+Isso mostra que a escolha de um valor depende do contexto do tabuleiro. Portanto, o Sudoku não é apenas um problema de classificação simples, mas um problema que exige inferência a partir de restrições.
 
-Durante o treinamento, a rede ajusta seus pesos internos para minimizar uma função de erro, permitindo aprender padrões presentes nos dados de treinamento.
+### 2.3 Redes Neurais Artificiais Multicamadas
 
-Neste trabalho, a RNA foi utilizada para aprender a relação entre tabuleiros incompletos e suas respectivas soluções completas.
+As Redes Neurais Artificiais Multicamadas, ou MLPs (Multilayer Perceptrons), são modelos compostos por uma camada de entrada, uma ou mais camadas ocultas e uma camada de saída.
 
-### 2.3 IA Neurosimbólica
+Durante o treinamento, a rede ajusta seus pesos internos para reduzir o erro entre a saída prevista e a saída correta. Neste trabalho, a rede foi treinada de forma supervisionada, recebendo como entrada tabuleiros incompletos e como saída esperada seus respectivos tabuleiros completos.
 
-A IA neurossimbólica busca integrar técnicas de aprendizado estatístico com mecanismos simbólicos de raciocínio.
+### 2.4 Abordagem Híbrida e IA Neurosimbólica
 
-Enquanto as redes neurais apresentam grande capacidade de aprendizado a partir de exemplos, sistemas simbólicos permitem representar conhecimento de forma explícita e verificável.
+Uma limitação das redes neurais é que elas aprendem padrões estatísticos, mas não garantem sozinhas o cumprimento de regras lógicas. No caso do Sudoku, isso significa que a RNA pode prever um número repetido em uma linha, coluna ou bloco.
 
-A solução desenvolvida segue essa filosofia ao combinar:
+Para lidar com essa limitação, foi utilizada uma abordagem híbrida. A rede neural indica valores prováveis para cada célula, enquanto um validador simbólico verifica se a solução respeita as regras do Sudoku. Caso haja inconsistências, um algoritmo de backtracking guiado pelas probabilidades da rede busca uma solução válida.
 
-- RNA para previsão dos valores;
-- Validação lógica das restrições;
-- Backtracking para correção de inconsistências.
+Essa combinação aproxima o projeto da ideia de IA neurossimbólica, em que aprendizado de máquina e representação simbólica são usados em conjunto.
+
+---
 
 ## 3. Representação do Problema
 
-Cada tabuleiro Sudoku 4x4 possui 16 células. As células vazias são representadas pelo valor 0.
+O tabuleiro utilizado possui dimensão 4x4, totalizando 16 células. As células vazias são representadas pelo valor 0.
 
-Para alimentar a rede neural, foi utilizada codificação one-hot encoding. Cada célula pode assumir cinco estados possíveis:
-
-- vazio;
-- 1;
-- 2;
-- 3;
-- 4.
-
-Assim, cada célula é representada por um vetor de cinco posições. Como existem 16 células, a entrada final da rede possui:
-
-16 × 5 = 80 atributos.
-
-A saída consiste na previsão dos valores corretos para as 16 células do tabuleiro. Para cada célula, a rede escolhe uma das quatro classes possíveis: 1, 2, 3 ou 4.
-
-## 4. Geração dos Dados
-
-O conjunto de dados foi gerado artificialmente. Inicialmente foram produzidos tabuleiros completos válidos de Sudoku 4x4. Posteriormente, algumas posições foram removidas aleatoriamente para criar tabuleiros incompletos.
-
-Cada amostra contém:
-
-- Entrada: tabuleiro incompleto;
-- Saída: tabuleiro completo correspondente.
-
-Essa estratégia garante que todas as soluções utilizadas durante o treinamento sejam válidas e respeitem as restrições do problema.
-
-Além disso, a remoção aleatória de pistas produz diferentes configurações de entrada, permitindo que a rede aprenda padrões mais variados.
-
-## 5. Arquitetura da Rede Neural
-
-A arquitetura implementada foi composta por:
+Exemplo de tabuleiro incompleto:
 
 ```text
-Entrada: 80 neurônios
-Camada oculta 1: 128 neurônios com função ReLU
-Camada oculta 2: 128 neurônios com função ReLU
-Camada oculta 3: 64 neurônios com função ReLU
-Saída: 16 × 4 neurônios
+1 0 0 4
+0 4 1 0
+0 1 4 0
+4 0 0 1
