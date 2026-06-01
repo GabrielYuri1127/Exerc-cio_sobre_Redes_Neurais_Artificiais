@@ -25,9 +25,6 @@ sudoku_rna_final/
 ├── README.md
 ├── relatorio.md
 ├── execucao.txt
-├── modelo_sudoku4x4.pt
-└── imagens/
-    └── curva_treinamento.png
 ```
 
 ## Como testar
