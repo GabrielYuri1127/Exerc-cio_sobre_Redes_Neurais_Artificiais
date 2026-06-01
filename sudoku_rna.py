@@ -1,297 +1,416 @@
-"""
-Exercicio: RNA multicamadas para Sudoku 4x4.
-
-A solucao combina:
-1) Geracao de dados validos de Sudoku 4x4.
-2) Rede neural MLP em PyTorch para prever a solucao completa.
-3) Validador simbolico das regras do Sudoku.
-4) Busca/backtracking guiada pelas probabilidades da RNA para garantir tabuleiro final valido.
-"""
-
-import itertools
+import argparse
+import math
 import random
-from dataclasses import dataclass
-from typing import List, Tuple, Optional
 
 import numpy as np
 import torch
-from torch import nn
-from torch.utils.data import DataLoader, TensorDataset
-import matplotlib.pyplot as plt
-
-N = 4
-SUB = 2
-VALORES = [1, 2, 3, 4]
-SEED = 42
-random.seed(SEED)
-np.random.seed(SEED)
-torch.manual_seed(SEED)
-torch.set_num_threads(1)
+import torch.nn as nn
+import torch.optim as optim
 
 
-BASE_BOARD = np.array([
-    [1, 2, 3, 4],
-    [3, 4, 1, 2],
-    [2, 1, 4, 3],
-    [4, 3, 2, 1],
-], dtype=int)
+def symbols(size):
+    return list(range(1, size + 1))
 
 
-def is_valid_board(board: np.ndarray) -> bool:
-    """Verifica se um tabuleiro 4x4 atende todas as restricoes do Sudoku."""
+def block_size(size):
+    root = int(math.sqrt(size))
+    if root * root != size:
+        raise ValueError("O tamanho deve ter raiz quadrada inteira: 4, 9 ou 16.")
+    return root
+
+
+def generate_base_board(size):
+    b = block_size(size)
+    board = np.zeros((size, size), dtype=int)
+
+    for r in range(size):
+        for c in range(size):
+            board[r, c] = ((r * b + r // b + c) % size) + 1
+
+    return board
+
+
+def shuffle_board(board):
+    size = board.shape[0]
+    b = block_size(size)
+
+    new_board = board.copy()
+
+    rows = []
+    row_bands = list(range(b))
+    random.shuffle(row_bands)
+
+    for band in row_bands:
+        band_rows = list(range(band * b, band * b + b))
+        random.shuffle(band_rows)
+        rows.extend(band_rows)
+
+    cols = []
+    col_stacks = list(range(b))
+    random.shuffle(col_stacks)
+
+    for stack in col_stacks:
+        stack_cols = list(range(stack * b, stack * b + b))
+        random.shuffle(stack_cols)
+        cols.extend(stack_cols)
+
+    new_board = new_board[rows, :]
+    new_board = new_board[:, cols]
+
+    vals = symbols(size)
+    shuffled = vals.copy()
+    random.shuffle(shuffled)
+    mapping = {old: new for old, new in zip(vals, shuffled)}
+
+    for old, new in mapping.items():
+        new_board[board == old] = new
+
+    return new_board
+
+
+def generate_complete_board(size):
+    base = generate_base_board(size)
+    return shuffle_board(base)
+
+
+def remove_cells(board, removed_ratio=0.45):
+    puzzle = board.copy()
+    size = board.shape[0]
+    total = size * size
+    remove_count = int(total * removed_ratio)
+
+    positions = list(range(total))
+    random.shuffle(positions)
+
+    for pos in positions[:remove_count]:
+        r, c = divmod(pos, size)
+        puzzle[r, c] = 0
+
+    return puzzle
+
+
+def is_valid_board(board):
     board = np.array(board)
-    alvo = set(VALORES)
+    size = board.shape[0]
+    b = block_size(size)
+    target = set(symbols(size))
 
-    if board.shape != (N, N):
+    if board.shape != (size, size):
         return False
 
-    for i in range(N):
-        if set(board[i, :]) != alvo:
-            return False
-        if set(board[:, i]) != alvo:
+    for r in range(size):
+        if set(board[r, :]) != target:
             return False
 
-    for r in range(0, N, SUB):
-        for c in range(0, N, SUB):
-            bloco = board[r:r + SUB, c:c + SUB].reshape(-1)
-            if set(bloco) != alvo:
+    for c in range(size):
+        if set(board[:, c]) != target:
+            return False
+
+    for br in range(0, size, b):
+        for bc in range(0, size, b):
+            block = board[br:br + b, bc:bc + b].flatten()
+            if set(block) != target:
                 return False
 
     return True
 
 
-def generate_all_solution_boards() -> List[np.ndarray]:
-    """Gera todos os tabuleiros completos validos 4x4 por backtracking."""
-    boards: List[np.ndarray] = []
-    board = np.zeros((N, N), dtype=int)
+def one_hot_board(board):
+    board = np.array(board)
+    size = board.shape[0]
+    flat = board.flatten()
 
-    def valid_place(r: int, c: int, v: int) -> bool:
-        if v in board[r, :]:
-            return False
-        if v in board[:, c]:
-            return False
-        br, bc = (r // SUB) * SUB, (c // SUB) * SUB
-        if v in board[br:br+SUB, bc:bc+SUB]:
-            return False
-        return True
+    encoded = np.zeros((size * size, size + 1), dtype=np.float32)
 
-    def backtrack(pos: int):
-        if pos == N * N:
-            boards.append(board.copy())
-            return
-        r, c = divmod(pos, N)
-        for v in VALORES:
-            if valid_place(r, c, v):
-                board[r, c] = v
-                backtrack(pos + 1)
-                board[r, c] = 0
-
-    backtrack(0)
-    return boards
-
-
-def mask_board(solution: np.ndarray, min_clues: int = 4, max_clues: int = 10) -> np.ndarray:
-    """Remove celulas aleatorias do tabuleiro completo. Zero representa celula vazia."""
-    puzzle = solution.copy()
-    clues = random.randint(min_clues, max_clues)
-    positions = list(range(N * N))
-    random.shuffle(positions)
-    remove_count = N * N - clues
-    for idx in positions[:remove_count]:
-        r, c = divmod(idx, N)
-        puzzle[r, c] = 0
-    return puzzle
-
-
-def one_hot_input(puzzle: np.ndarray) -> np.ndarray:
-    """Codifica cada celula em one-hot com 5 possibilidades: vazio, 1, 2, 3, 4."""
-    x = np.zeros((N * N, N + 1), dtype=np.float32)
-    flat = puzzle.reshape(-1)
     for i, value in enumerate(flat):
-        x[i, int(value)] = 1.0
-    return x.reshape(-1)
+        encoded[i, int(value)] = 1.0
+
+    return encoded.flatten()
 
 
-def target_output(solution: np.ndarray) -> np.ndarray:
-    """Rotulos de 0 a 3 representando os valores 1 a 4 em cada celula."""
-    return solution.reshape(-1).astype(np.int64) - 1
+def generate_dataset(size, samples, removed_ratio):
+    x_data = []
+    y_data = []
 
+    for _ in range(samples):
+        solution = generate_complete_board(size)
+        puzzle = remove_cells(solution, removed_ratio)
 
-def make_dataset(num_samples: int = 6000) -> Tuple[np.ndarray, np.ndarray, List[np.ndarray]]:
-    solutions = generate_all_solution_boards()
-    X, y = [], []
-    for _ in range(num_samples):
-        sol = random.choice(solutions)
-        puzzle = mask_board(sol)
-        X.append(one_hot_input(puzzle))
-        y.append(target_output(sol))
-    return np.array(X, dtype=np.float32), np.array(y, dtype=np.int64), solutions
+        x_data.append(one_hot_board(puzzle))
+        y_data.append(solution.flatten() - 1)
+
+    x = torch.tensor(np.array(x_data), dtype=torch.float32)
+    y = torch.tensor(np.array(y_data), dtype=torch.long)
+
+    return x, y
 
 
 class SudokuMLP(nn.Module):
-    """Rede neural artificial multicamadas para prever valores das 16 celulas."""
-    def __init__(self):
+    def __init__(self, size):
         super().__init__()
+
+        self.size = size
+        input_dim = size * size * (size + 1)
+        output_dim = size * size * size
+
+        hidden1 = max(128, input_dim)
+        hidden2 = max(128, input_dim // 2)
+        hidden3 = max(64, input_dim // 4)
+
         self.net = nn.Sequential(
-            nn.Linear(16 * 5, 128),
+            nn.Linear(input_dim, hidden1),
             nn.ReLU(),
-            nn.Linear(128, 128),
+            nn.Linear(hidden1, hidden2),
             nn.ReLU(),
-            nn.Linear(128, 64),
+            nn.Linear(hidden2, hidden3),
             nn.ReLU(),
-            nn.Linear(64, 16 * 4)
+            nn.Linear(hidden3, output_dim)
         )
 
     def forward(self, x):
-        return self.net(x).view(-1, 16, 4)
+        out = self.net(x)
+        return out.view(-1, self.size * self.size, self.size)
 
 
-@dataclass
-class TrainResult:
-    model: SudokuMLP
-    train_losses: List[float]
-    test_accuracies: List[float]
-
-
-def train_model(epochs: int = 80, num_samples: int = 8000) -> Tuple[TrainResult, Tuple[np.ndarray, np.ndarray], List[np.ndarray]]:
-    X, y, solutions = make_dataset(num_samples)
-    split = int(0.8 * len(X))
-    X_train, X_test = X[:split], X[split:]
-    y_train, y_test = y[:split], y[split:]
-
-    train_ds = TensorDataset(torch.tensor(X_train), torch.tensor(y_train))
-    train_loader = DataLoader(train_ds, batch_size=128, shuffle=True)
-
-    model = SudokuMLP()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+def train_model(model, x_train, y_train, x_test, y_test, epochs, lr):
     criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=lr)
 
-    losses, accs = [], []
     for epoch in range(epochs):
         model.train()
-        total_loss = 0.0
-        for xb, yb in train_loader:
-            optimizer.zero_grad()
-            logits = model(xb)
-            loss = criterion(logits.reshape(-1, 4), yb.reshape(-1))
-            loss.backward()
-            optimizer.step()
-            total_loss += loss.item()
+
+        optimizer.zero_grad()
+        logits = model(x_train)
+
+        loss = criterion(
+            logits.reshape(-1, model.size),
+            y_train.reshape(-1)
+        )
+
+        loss.backward()
+        optimizer.step()
 
         model.eval()
+
         with torch.no_grad():
-            logits = model(torch.tensor(X_test))
-            pred = logits.argmax(dim=-1)
-            acc = (pred == torch.tensor(y_test)).float().mean().item()
+            test_logits = model(x_test)
+            predictions = torch.argmax(test_logits, dim=2)
+            accuracy = (predictions == y_test).float().mean().item()
 
-        losses.append(total_loss / len(train_loader))
-        accs.append(acc)
-        if (epoch + 1) % 10 == 0:
-            print(f"Epoca {epoch+1:03d} | loss={losses[-1]:.4f} | acc_teste={acc:.4f}")
-
-    return TrainResult(model, losses, accs), (X_test, y_test), solutions
-
-
-def candidates_for_cell(board: np.ndarray, r: int, c: int) -> List[int]:
-    if board[r, c] != 0:
-        return [int(board[r, c])]
-    used = set(board[r, :]) | set(board[:, c]) | set(board[(r//SUB)*SUB:(r//SUB)*SUB+SUB, (c//SUB)*SUB:(c//SUB)*SUB+SUB].reshape(-1))
-    return [v for v in VALORES if v not in used]
+        print(
+            f"Época {epoch + 1:03d}/{epochs} | "
+            f"Loss: {loss.item():.4f} | "
+            f"Acurácia teste: {accuracy:.4f}"
+        )
 
 
-def solve_with_backtracking_guided_by_rna(puzzle: np.ndarray, probs: np.ndarray) -> Optional[np.ndarray]:
-    """Completa o Sudoku usando restricoes simbolicas e a ordem sugerida pela RNA."""
-    board = puzzle.copy()
+def predict_board(model, puzzle):
+    size = model.size
 
-    def backtrack() -> bool:
-        empty_cells = [(r, c) for r in range(N) for c in range(N) if board[r, c] == 0]
-        if not empty_cells:
-            return is_valid_board(board)
+    model.eval()
 
-        # MRV: escolhe a celula com menos candidatos; desempate pela confianca da RNA.
-        best = None
-        best_cands = None
-        for r, c in empty_cells:
-            cands = candidates_for_cell(board, r, c)
-            if not cands:
-                return False
-            score = max(float(probs[r * N + c, v - 1]) for v in cands)
-            key = (len(cands), -score)
-            if best is None or key < best:
-                best = key
-                best_cands = (r, c, cands)
+    x = torch.tensor(
+        one_hot_board(puzzle),
+        dtype=torch.float32
+    ).unsqueeze(0)
 
-        r, c, cands = best_cands
-        cands = sorted(cands, key=lambda v: probs[r * N + c, v - 1], reverse=True)
-        for v in cands:
-            board[r, c] = v
-            if backtrack():
-                return True
-            board[r, c] = 0
+    with torch.no_grad():
+        logits = model(x)
+        probs = torch.softmax(logits, dim=2)[0].numpy()
+        pred = np.argmax(probs, axis=1) + 1
+
+    predicted_board = pred.reshape(size, size)
+
+    puzzle = np.array(puzzle)
+
+    for r in range(size):
+        for c in range(size):
+            if puzzle[r, c] != 0:
+                predicted_board[r, c] = puzzle[r, c]
+
+    return predicted_board, probs
+
+
+def is_safe(board, row, col, value):
+    size = board.shape[0]
+    b = block_size(size)
+
+    if value in board[row, :]:
         return False
 
-    if backtrack():
+    if value in board[:, col]:
+        return False
+
+    start_row = (row // b) * b
+    start_col = (col // b) * b
+
+    if value in board[start_row:start_row + b, start_col:start_col + b]:
+        return False
+
+    return True
+
+
+def backtracking_guided(puzzle, probs, max_empty_for_backtracking=60):
+    board = np.array(puzzle).copy()
+    size = board.shape[0]
+
+    empty_cells = []
+
+    for r in range(size):
+        for c in range(size):
+            if board[r, c] == 0:
+                idx = r * size + c
+                confidence = np.max(probs[idx])
+                empty_cells.append((confidence, r, c))
+
+    if len(empty_cells) > max_empty_for_backtracking:
+        print(
+            f"\nAviso: {len(empty_cells)} células vazias. "
+            f"Backtracking pode ficar pesado. "
+            f"Limite atual: {max_empty_for_backtracking}."
+        )
+        return None
+
+    empty_cells.sort(reverse=True)
+
+    def solve():
+        selected = None
+
+        for _, r, c in empty_cells:
+            if board[r, c] == 0:
+                selected = (r, c)
+                break
+
+        if selected is None:
+            return is_valid_board(board)
+
+        r, c = selected
+        idx = r * size + c
+
+        values = list(range(1, size + 1))
+        values.sort(key=lambda v: probs[idx][v - 1], reverse=True)
+
+        for value in values:
+            if is_safe(board, r, c, value):
+                board[r, c] = value
+
+                if solve():
+                    return True
+
+                board[r, c] = 0
+
+        return False
+
+    if solve():
         return board
+
     return None
 
 
-def predict_solution(model: SudokuMLP, puzzle: np.ndarray) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
-    model.eval()
-    x = torch.tensor(one_hot_input(puzzle)).unsqueeze(0)
-    with torch.no_grad():
-        logits = model(x)[0]
-        probs = torch.softmax(logits, dim=-1).numpy()
-    raw = probs.argmax(axis=-1).reshape(N, N) + 1
+def solve_with_neural_and_symbolic(model, puzzle, max_empty_for_backtracking):
+    direct_prediction, probs = predict_board(model, puzzle)
 
-    # Preserva as pistas iniciais.
-    raw = raw.astype(int)
-    raw[puzzle != 0] = puzzle[puzzle != 0]
+    if is_valid_board(direct_prediction):
+        return direct_prediction, direct_prediction, True
 
-    repaired = solve_with_backtracking_guided_by_rna(puzzle, probs)
-    return raw, probs, repaired
+    corrected = backtracking_guided(
+        puzzle,
+        probs,
+        max_empty_for_backtracking=max_empty_for_backtracking
+    )
 
+    if corrected is None:
+        return direct_prediction, direct_prediction, False
 
-def print_board(title: str, board: np.ndarray):
-    print(title)
-    for row in board:
-        print(" ".join(str(int(x)) for x in row))
-    print()
+    return direct_prediction, corrected, is_valid_board(corrected)
 
 
-def plot_training(losses: List[float], accs: List[float]):
-    plt.figure(figsize=(8, 4))
-    plt.plot(losses, label="Loss de treino")
-    plt.plot(accs, label="Acuracia no teste")
-    plt.xlabel("Epoca")
-    plt.ylabel("Valor")
-    plt.title("Treinamento da RNA para Sudoku 4x4")
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig("imagens/curva_treinamento.png", dpi=150)
+def print_board(title, board):
+    print(f"\n{title}")
+    print("-" * 40)
+
+    size = board.shape[0]
+
+    for r in range(size):
+        print(" ".join(f"{int(x):2d}" for x in board[r]))
 
 
 def main():
-    print("Gerando dados e treinando RNA multicamadas...")
-    result, _, solutions = train_model(epochs=60, num_samples=4000)
-    torch.save(result.model.state_dict(), "modelo_sudoku4x4.pt")
-    plot_training(result.train_losses, result.test_accuracies)
+    parser = argparse.ArgumentParser(
+        description="RNA Multicamadas para Sudoku 4x4, 9x9 e 16x16."
+    )
 
-    solution = random.choice(solutions)
-    puzzle = mask_board(solution, min_clues=5, max_clues=7)
-    raw, probs, repaired = predict_solution(result.model, puzzle)
+    parser.add_argument("--size", type=int, default=4, choices=[4, 9, 16])
+    parser.add_argument("--samples", type=int, default=1000)
+    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--lr", type=float, default=0.001)
+    parser.add_argument("--removed-ratio", type=float, default=0.40)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--max-empty", type=int, default=60)
 
-    print_board("Tabuleiro inicial:", puzzle)
-    print_board("Saida direta da RNA:", raw)
-    print("Saida direta e valida?", is_valid_board(raw))
+    args = parser.parse_args()
 
-    if repaired is not None:
-        print_board("Solucao final apos validacao simbolica:", repaired)
-        print("Solucao final e valida?", is_valid_board(repaired))
-    else:
-        print("Nao foi possivel reparar a solucao.")
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
 
-    print("Arquivo de imagem gerado: imagens/curva_treinamento.png")
-    print("Modelo salvo: modelo_sudoku4x4.pt")
+    size = args.size
+
+    print(f"Sudoku {size}x{size}")
+    print(f"Blocos {block_size(size)}x{block_size(size)}")
+    print("Gerando dados...")
+
+    x, y = generate_dataset(
+        size=size,
+        samples=args.samples,
+        removed_ratio=args.removed_ratio
+    )
+
+    split = int(0.8 * args.samples)
+
+    x_train, x_test = x[:split], x[split:]
+    y_train, y_test = y[:split], y[split:]
+
+    print(f"Amostras de treino: {len(x_train)}")
+    print(f"Amostras de teste: {len(x_test)}")
+
+    model = SudokuMLP(size)
+
+    print("\nTreinando a RNA...")
+
+    train_model(
+        model,
+        x_train,
+        y_train,
+        x_test,
+        y_test,
+        epochs=args.epochs,
+        lr=args.lr
+    )
+
+    model_name = f"modelo_sudoku{size}x{size}.pt"
+    torch.save(model.state_dict(), model_name)
+
+    print(f"\nModelo salvo em: {model_name}")
+
+    solution = generate_complete_board(size)
+    puzzle = remove_cells(solution, removed_ratio=args.removed_ratio)
+
+    direct_prediction, final_solution, valid = solve_with_neural_and_symbolic(
+        model,
+        puzzle,
+        max_empty_for_backtracking=args.max_empty
+    )
+
+    print_board("Tabuleiro inicial", puzzle)
+    print_board("Solução correta original", solution)
+    print_board("Saída direta da RNA", direct_prediction)
+
+    print(f"\nSaída direta da RNA é válida? {is_valid_board(direct_prediction)}")
+
+    print_board("Solução final", final_solution)
+
+    print(f"\nSolução final é válida? {valid}")
 
 
 if __name__ == "__main__":
